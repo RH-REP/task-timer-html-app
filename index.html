@@ -690,7 +690,8 @@
       const id = button.dataset.id;
       const action = button.dataset.action;
       if (action === "edit") editingId = id;
-      renderLog();
+      renderEditModal();
+      syncSidePanelHeight();
     });
 
     editModal.addEventListener("click", (event) => {
