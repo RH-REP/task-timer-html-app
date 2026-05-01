@@ -439,6 +439,8 @@
       startMeta.textContent = sessionStartedAt
         ? `Started ${formatClockTime(sessionStartedAt)}`
         : "Start time will appear when the timer runs.";
+      timerPanel.dataset.session = sessionStartedAt ? "active" : "idle";
+      taskName.readOnly = Boolean(sessionStartedAt);
       document.title = `${formatTime(visibleSeconds)} - Task Timer`;
     }
 
