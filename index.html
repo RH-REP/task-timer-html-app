@@ -92,9 +92,12 @@
     </section>
   </main>
 
+  <div class="edit-popover" id="editModal" hidden></div>
+
   <script>
     const timerPanel = document.querySelector("#timerPanel");
     const sidePanel = document.querySelector(".side-panel");
+    const editModal = document.querySelector("#editModal");
     const taskName = document.querySelector("#taskName");
     const minutesInput = document.querySelector("#minutes");
     const minutesLabel = document.querySelector("#minutesLabel");
@@ -503,6 +506,7 @@
 
       if (!dayEntries.length) {
         history.innerHTML = '<div class="empty">No completed tasks on this day.</div>';
+        renderEditModal();
         syncSidePanelHeight();
         return;
       }
@@ -549,16 +553,25 @@
           </article>
         `;
       }).join("");
-      const editEntry = dayEntries.find((entry) => entry.id === editingId);
-
       history.innerHTML = `
         <div class="timeline" style="--hour-height: ${hourHeight}px;">
           <div class="time-grid">${gridRows}</div>
           ${blocks}
         </div>
-        ${editEntry ? renderEditEntry(editEntry) : ""}
       `;
+      renderEditModal();
       syncSidePanelHeight();
+    }
+
+    function renderEditModal() {
+      const entry = completed.find((item) => item.id === editingId);
+      if (!entry) {
+        editModal.hidden = true;
+        editModal.innerHTML = "";
+        return;
+      }
+      editModal.hidden = false;
+      editModal.innerHTML = renderEditEntry(entry);
     }
 
     function renderEditEntry(entry) {
@@ -677,6 +690,14 @@
       const id = button.dataset.id;
       const action = button.dataset.action;
       if (action === "edit") editingId = id;
+      renderLog();
+    });
+
+    editModal.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const id = button.dataset.id;
+      const action = button.dataset.action;
       if (action === "cancel") editingId = null;
       if (action === "delete") {
         completed = completed.filter((entry) => entry.id !== id);
@@ -686,7 +707,7 @@
       renderLog();
     });
 
-    history.addEventListener("input", (event) => {
+    editModal.addEventListener("input", (event) => {
       const form = event.target.closest(".edit-form");
       if (!form || !["startedAt", "minutes"].includes(event.target.name)) return;
       const start = form.elements.startedAt.value;
@@ -696,7 +717,7 @@
       preview.textContent = formatClockTime(addMinutesToIso(start, minutes));
     });
 
-    history.addEventListener("submit", (event) => {
+    editModal.addEventListener("submit", (event) => {
       event.preventDefault();
       const form = event.target.closest(".edit-form");
       if (!form) return;

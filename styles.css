@@ -484,11 +484,26 @@ button:active {
   font-size: 0.82rem;
 }
 
+.edit-popover {
+  position: absolute;
+  top: 40px;
+  right: 24px;
+  z-index: 20;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.edit-popover[hidden] {
+  display: none;
+}
+
 .edit-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
   background: #fff;
+  box-shadow: 0 24px 70px rgba(23, 32, 38, 0.22);
 }
 
 .edit-panel-head {
@@ -582,5 +597,12 @@ button:active {
 
   .preset-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .edit-popover {
+    top: 18px;
+    right: 12px;
+    width: min(360px, calc(100vw - 24px));
+    max-height: min(70vh, 620px);
   }
 }
