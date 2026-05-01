@@ -15,44 +15,43 @@
           <div class="status" id="status">Ready</div>
         </div>
 
-        <div class="mode-row" aria-label="Timer mode">
-          <button type="button" data-mode="down" aria-pressed="true">Countdown</button>
-          <button type="button" data-mode="up" aria-pressed="false">Count up</button>
-        </div>
+        <div class="timer-body">
+          <div class="setup-panel">
+            <div class="mode-row" aria-label="Timer mode">
+              <button type="button" data-mode="down" aria-pressed="true">Countdown</button>
+              <button type="button" data-mode="up" aria-pressed="false">Count up</button>
+            </div>
 
-        <div class="task-row">
-          <div>
-            <label for="taskName">Task</label>
-            <input id="taskName" type="text" value="Deep work" autocomplete="off">
-          </div>
-          <div class="goal-field">
-            <label for="minutes" id="minutesLabel">Goal minutes</label>
-            <input id="minutes" type="number" min="1" max="240" value="25">
-          </div>
-        </div>
-
-        <div class="clock-wrap">
-          <div class="clock" id="clock" aria-live="polite">
-            <div>
-              <div class="time" id="time">25:00</div>
-              <div class="subtime" id="subtime">25 minutes planned</div>
+            <div class="task-row">
+              <div>
+                <label for="taskName">Task</label>
+                <input id="taskName" type="text" value="Deep work" autocomplete="off">
+              </div>
+              <div class="goal-field">
+                <label for="minutes" id="minutesLabel">Goal minutes</label>
+                <input id="minutes" type="number" min="1" max="240" value="25">
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="start-meta" id="startMeta">Start time will appear when the timer runs.</div>
+          <div class="timer-stage">
+            <div class="clock-wrap">
+              <div class="clock" id="clock" aria-live="polite">
+                <div>
+                  <div class="time" id="time">25:00</div>
+                  <div class="subtime" id="subtime">25 minutes planned</div>
+                </div>
+              </div>
+            </div>
 
-        <div class="controls" aria-label="Timer controls">
-          <button class="primary" id="startPause" type="button">Start</button>
-          <button id="reset" type="button">Reset</button>
-          <button id="finish" type="button">Finish</button>
-        </div>
+            <div class="start-meta" id="startMeta">Start time will appear when the timer runs.</div>
 
-        <div class="preset-grid" aria-label="Timer presets">
-          <button type="button" data-minutes="5">5 min</button>
-          <button type="button" data-minutes="15">15 min</button>
-          <button type="button" data-minutes="25">25 min</button>
-          <button type="button" data-minutes="50">50 min</button>
+            <div class="controls" aria-label="Timer controls">
+              <button class="primary" id="startPause" type="button">Start</button>
+              <button id="reset" type="button">Reset</button>
+              <button id="finish" type="button">Finish</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -132,6 +131,9 @@
     let selectedDate = new Date();
     let exportUrl = null;
     let completed = loadSavedLog();
+    let scheduled = loadSavedSchedule();
+    let scheduleDrag = null;
+    let lockedTimerPanelHeight = null;
 
     function clampMinutes(value) {
       const number = Number.parseInt(value, 10);
@@ -224,12 +226,25 @@
       return new Date(start.getTime() + minutes * 60000).toISOString();
     }
 
+    function isoForSelectedDayMinute(minutes) {
+      const date = new Date(selectedDate);
+      date.setHours(0, Math.max(0, Math.min(1439, minutes)), 0, 0);
+      return date.toISOString();
+    }
+
     function syncSidePanelHeight() {
       if (window.matchMedia("(max-width: 820px)").matches) {
+        lockedTimerPanelHeight = null;
+        timerPanel.style.height = "";
         sidePanel.style.height = "";
         return;
       }
-      sidePanel.style.height = `${timerPanel.offsetHeight}px`;
+      if (!lockedTimerPanelHeight) {
+        timerPanel.style.height = "";
+        lockedTimerPanelHeight = timerPanel.offsetHeight;
+      }
+      timerPanel.style.height = `${lockedTimerPanelHeight}px`;
+      sidePanel.style.height = `${lockedTimerPanelHeight}px`;
     }
 
     function normalizeEntry(entry) {
@@ -240,6 +255,19 @@
         id: entry.id || crypto.randomUUID(),
         task: entry.task || "Untitled task",
         mode: entry.mode || "down",
+        minutes,
+        startedAt,
+        endedAt
+      };
+    }
+
+    function normalizeSchedule(entry) {
+      const endedAt = entry.endedAt || new Date().toISOString();
+      const minutes = Math.max(1, Number.parseInt(entry.minutes, 10) || 1);
+      const startedAt = entry.startedAt || new Date(new Date(endedAt).getTime() - minutes * 60000).toISOString();
+      return {
+        id: entry.id || crypto.randomUUID(),
+        task: entry.task || "Planned task",
         minutes,
         startedAt,
         endedAt
@@ -258,6 +286,10 @@
       localStorage.setItem("taskTimerLog", JSON.stringify(completed));
     }
 
+    function saveSchedule() {
+      localStorage.setItem("taskTimerSchedule", JSON.stringify(scheduled));
+    }
+
     function csvCell(value) {
       const text = String(value ?? "");
       return `"${text.replace(/"/g, '""')}"`;
@@ -265,6 +297,7 @@
 
     function buildCsv() {
       const headers = [
+        "Type",
         "Date",
         "Start",
         "Finish",
@@ -275,16 +308,19 @@
         "Started ISO",
         "Finished ISO"
       ];
-      const rows = completed
-        .slice()
+      const rows = [
+        ...completed.map((entry) => ({ ...entry, type: "Completed" })),
+        ...scheduled.map((entry) => ({ ...entry, type: "Schedule", mode: "plan" }))
+      ]
         .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt))
         .map((entry) => [
+          entry.type,
           formatCsvDate(entry.startedAt),
           formatClockTime(entry.startedAt),
           formatClockTime(entry.endedAt),
           entry.minutes,
           (entry.minutes / 60).toFixed(2),
-          entry.mode === "up" ? "Count up" : "Countdown",
+          entry.type === "Schedule" ? "Planned" : entry.mode === "up" ? "Count up" : "Countdown",
           entry.task,
           entry.startedAt,
           entry.endedAt
@@ -303,7 +339,7 @@
       downloadCsv.textContent = `Download ${filename}`;
       downloadCsv.dataset.ready = "true";
       downloadCsv.click();
-      importNote.textContent = `CSV ready: ${completed.length} task${completed.length === 1 ? "" : "s"} included.`;
+      importNote.textContent = `CSV ready: ${completed.length} task${completed.length === 1 ? "" : "s"} and ${scheduled.length} plan${scheduled.length === 1 ? "" : "s"} included.`;
     }
 
     function parseCsv(text) {
@@ -343,22 +379,38 @@
       return rows.filter((items) => items.some((item) => item.trim() !== ""));
     }
 
-    function rowToEntry(headers, row) {
+    function rowToImportItem(headers, row) {
       const value = (name) => row[headers.indexOf(name)] || "";
+      const typeText = value("Type").toLowerCase();
       const startedIso = value("Started ISO");
       const finishedIso = value("Finished ISO");
       const minutes = Math.max(1, Number.parseInt(value("Minutes"), 10) || 1);
       const startedAt = startedIso || new Date().toISOString();
       const endedAt = finishedIso || addMinutesToIso(startedAt, minutes);
       const modeText = value("Mode").toLowerCase();
-      return normalizeEntry({
-        id: crypto.randomUUID(),
-        task: value("Task") || "Imported task",
-        mode: modeText.includes("up") ? "up" : "down",
-        minutes,
-        startedAt,
-        endedAt
-      });
+      if (typeText.includes("schedule") || typeText.includes("plan") || modeText.includes("plan")) {
+        return {
+          type: "schedule",
+          entry: normalizeSchedule({
+            id: crypto.randomUUID(),
+            task: value("Task") || "Imported plan",
+            minutes,
+            startedAt,
+            endedAt
+          })
+        };
+      }
+      return {
+        type: "completed",
+        entry: normalizeEntry({
+          id: crypto.randomUUID(),
+          task: value("Task") || "Imported task",
+          mode: modeText.includes("up") ? "up" : "down",
+          minutes,
+          startedAt,
+          endedAt
+        })
+      };
     }
 
     function importHistoryCsv(file) {
@@ -372,20 +424,30 @@
             importNote.textContent = "Import skipped: CSV needs Task, Minutes, and Started ISO columns.";
             return;
           }
-          const existing = new Set(completed.map(entryKey));
-          const imported = rows
-            .map((row) => rowToEntry(headers, row))
-            .filter((entry) => {
-              const key = entryKey(entry);
-              if (existing.has(key)) return false;
-              existing.add(key);
-              return true;
-            });
-          completed = [...completed, ...imported].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)).slice(0, 300);
-          if (imported.length) selectedDate = new Date(imported[0].startedAt);
+          const existingCompleted = new Set(completed.map(entryKey));
+          const existingScheduled = new Set(scheduled.map(entryKey));
+          const importedCompleted = [];
+          const importedScheduled = [];
+          rows.map((row) => rowToImportItem(headers, row)).forEach((item) => {
+            const key = entryKey(item.entry);
+            if (item.type === "schedule") {
+              if (existingScheduled.has(key)) return;
+              existingScheduled.add(key);
+              importedScheduled.push(item.entry);
+              return;
+            }
+            if (existingCompleted.has(key)) return;
+            existingCompleted.add(key);
+            importedCompleted.push(item.entry);
+          });
+          completed = [...completed, ...importedCompleted].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)).slice(0, 300);
+          scheduled = [...scheduled, ...importedScheduled].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt)).slice(-300);
+          const newestImport = importedCompleted[0] || importedScheduled[0];
+          if (newestImport) selectedDate = new Date(newestImport.startedAt);
           saveLog();
+          saveSchedule();
           renderLog({ preserveScroll: true });
-          importNote.textContent = `Imported ${imported.length} new task${imported.length === 1 ? "" : "s"}.`;
+          importNote.textContent = `Imported ${importedCompleted.length} task${importedCompleted.length === 1 ? "" : "s"} and ${importedScheduled.length} plan${importedScheduled.length === 1 ? "" : "s"}.`;
         } catch {
           importNote.textContent = "Import failed: CSV could not be read.";
         } finally {
@@ -419,16 +481,25 @@
     }
 
     function updateDisplay() {
-      const visibleSeconds = mode === "down" ? Math.max(0, duration - elapsed) : elapsed;
+      const isOvertime = mode === "down" && elapsed > duration;
+      const visibleSeconds = mode === "down"
+        ? (isOvertime ? elapsed - duration : Math.max(0, duration - elapsed))
+        : elapsed;
       const progress = mode === "down"
-        ? (duration === 0 ? 0 : (elapsed / duration) * 360)
+        ? Math.min(360, duration === 0 ? 0 : (elapsed / duration) * 360)
         : Math.min(360, (elapsed / duration) * 360);
 
-      timeDisplay.textContent = formatTime(visibleSeconds);
+      const displayTime = isOvertime ? `+${formatTime(visibleSeconds)}` : formatTime(visibleSeconds);
+      timeDisplay.textContent = displayTime;
       clock.style.setProperty("--progress", `${progress}deg`);
       if (mode === "down") {
-        const minutesLeft = Math.ceil(visibleSeconds / 60);
-        subtime.textContent = `${minutesLeft} minute${minutesLeft === 1 ? "" : "s"} left`;
+        if (isOvertime) {
+          const minutesOver = Math.floor(visibleSeconds / 60);
+          subtime.textContent = `${minutesOver} minute${minutesOver === 1 ? "" : "s"} over target`;
+        } else {
+          const minutesLeft = Math.ceil(visibleSeconds / 60);
+          subtime.textContent = `${minutesLeft} minute${minutesLeft === 1 ? "" : "s"} left`;
+        }
       } else {
         const minutesFocused = Math.floor(elapsed / 60);
         subtime.textContent = `${minutesFocused} minute${minutesFocused === 1 ? "" : "s"} focused`;
@@ -441,7 +512,7 @@
         : "Start time will appear when the timer runs.";
       timerPanel.dataset.session = sessionStartedAt ? "active" : "idle";
       taskName.readOnly = Boolean(sessionStartedAt);
-      document.title = `${formatTime(visibleSeconds)} - Task Timer`;
+      document.title = `${displayTime} - Task Timer`;
     }
 
     function stopTimer() {
@@ -458,13 +529,6 @@
       running = true;
       timerId = window.setInterval(() => {
         elapsed += 1;
-        if (mode === "down" && elapsed >= duration) {
-          elapsed = duration;
-          stopTimer();
-          recordSession();
-          elapsed = 0;
-          sessionStartedAt = null;
-        }
         updateDisplay();
       }, 1000);
       updateDisplay();
@@ -503,17 +567,13 @@
       const dayEntries = completed
         .filter((entry) => dateKey(entry.startedAt) === selectedDateKey())
         .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+      const daySchedules = scheduled
+        .filter((entry) => dateKey(entry.startedAt) === selectedDateKey())
+        .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
       const total = dayEntries.reduce((sum, entry) => sum + entry.minutes, 0);
       dateLabel.textContent = formatDateLabel(selectedDate);
       sessionCount.textContent = dayEntries.length;
       totalMinutes.textContent = total;
-
-      if (!dayEntries.length) {
-        history.innerHTML = '<div class="empty">No completed tasks on this day.</div>';
-        renderEditModal();
-        syncSidePanelHeight();
-        return;
-      }
 
       const startHour = 0;
       const hourHeight = 42;
@@ -529,7 +589,11 @@
         `;
       }).join("");
       const lanes = [];
-      const positionedEntries = dayEntries.map((entry) => {
+      const dayItems = [
+        ...dayEntries.map((entry) => ({ ...entry, type: "finished" })),
+        ...daySchedules.map((entry) => ({ ...entry, type: "schedule" }))
+      ].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+      const positionedEntries = dayItems.map((entry) => {
         const start = minutesSinceMidnight(entry.startedAt);
         const end = start + entry.minutes;
         let lane = lanes.findIndex((laneEnd) => start >= laneEnd);
@@ -548,18 +612,22 @@
         const height = Math.max(72, (entry.minutes / 60) * hourHeight);
         const left = `calc(64px + ((100% - 74px) / ${laneCount}) * ${entry.lane})`;
         const right = `calc(10px + ((100% - 74px) / ${laneCount}) * ${laneCount - entry.lane - 1})`;
+        const blockClass = entry.type === "schedule" ? "task-block schedule-block" : "task-block";
+        const label = entry.type === "schedule" ? "Plan" : `${entry.minutes} min`;
         return `
-          <article class="task-block" style="top: ${top}px; height: ${height}px; left: ${left}; right: ${right};" data-id="${entry.id}">
+          <article class="${blockClass}" style="top: ${top}px; height: ${height}px; left: ${left}; right: ${right};" data-id="${entry.id}" data-type="${entry.type}">
             <strong>${escapeHtml(entry.task)}</strong>
             <span>${formatRange(entry.startedAt, entry.endedAt)}</span>
-            <div class="duration">${entry.minutes} min</div>
+            <div class="duration">${label}</div>
             <button class="menu-button" type="button" data-action="edit" data-id="${entry.id}">Edit</button>
           </article>
         `;
       }).join("");
+      const emptyHint = dayItems.length ? "" : '<div class="timeline-hint">Drag on the timetable to plan a task.</div>';
       history.innerHTML = `
         <div class="timeline" style="--hour-height: ${hourHeight}px;">
           <div class="time-grid">${gridRows}</div>
+          ${emptyHint}
           ${blocks}
         </div>
       `;
@@ -572,27 +640,30 @@
     }
 
     function renderEditModal() {
-      const entry = completed.find((item) => item.id === editingId);
+      const finishedEntry = completed.find((item) => item.id === editingId);
+      const scheduleEntry = scheduled.find((item) => item.id === editingId);
+      const entry = finishedEntry || scheduleEntry;
       if (!entry) {
         editModal.hidden = true;
         editModal.innerHTML = "";
         return;
       }
       editModal.hidden = false;
-      editModal.innerHTML = renderEditEntry(entry);
+      editModal.innerHTML = renderEditEntry(entry, scheduleEntry ? "schedule" : "finished");
     }
 
-    function renderEditEntry(entry) {
+    function renderEditEntry(entry, type) {
+      const isSchedule = type === "schedule";
       return `
         <section class="edit-panel" data-id="${entry.id}">
           <div class="edit-panel-head">
             <div>
-              <strong>Edit finished task</strong>
-              <span>${entry.mode === "up" ? "Count up" : "Countdown"} session</span>
+              <strong>${isSchedule ? "Edit schedule" : "Edit finished task"}</strong>
+              <span>${isSchedule ? "Planned task" : `${entry.mode === "up" ? "Count up" : "Countdown"} session`}</span>
             </div>
             <div class="duration">${entry.minutes} min</div>
           </div>
-          <form class="edit-form" data-id="${entry.id}">
+          <form class="edit-form" data-id="${entry.id}" data-type="${type}">
             <div class="full">
               <label for="edit-task-${entry.id}">Task</label>
               <input id="edit-task-${entry.id}" name="task" type="text" value="${escapeAttr(entry.task)}">
@@ -628,6 +699,15 @@
       }
     }
 
+    function loadSavedSchedule() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("taskTimerSchedule") || "[]");
+        return Array.isArray(saved) ? saved.map(normalizeSchedule) : [];
+      } catch {
+        return [];
+      }
+    }
+
     function escapeHtml(value) {
       return value.replace(/[&<>"']/g, (char) => ({
         "&": "&amp;",
@@ -640,6 +720,51 @@
 
     function escapeAttr(value) {
       return escapeHtml(value).replace(/`/g, "&#096;");
+    }
+
+    function timelineMinuteFromEvent(event, timeline) {
+      const hourHeight = Number.parseFloat(getComputedStyle(timeline).getPropertyValue("--hour-height")) || 42;
+      const rect = timeline.getBoundingClientRect();
+      const rawMinutes = ((event.clientY - rect.top + timeline.scrollTop) / hourHeight) * 60;
+      return Math.max(0, Math.min(1440, Math.round(rawMinutes / 15) * 15));
+    }
+
+    function renderScheduleDraft(timeline, startMinute, endMinute) {
+      const existing = timeline.querySelector(".schedule-draft");
+      if (existing) existing.remove();
+      const topMinute = Math.min(startMinute, endMinute);
+      const minutes = Math.max(15, Math.abs(endMinute - startMinute));
+      const hourHeight = Number.parseFloat(getComputedStyle(timeline).getPropertyValue("--hour-height")) || 42;
+      const draft = document.createElement("div");
+      draft.className = "schedule-draft";
+      draft.style.top = `${(topMinute / 60) * hourHeight}px`;
+      draft.style.height = `${Math.max(24, (minutes / 60) * hourHeight)}px`;
+      draft.textContent = `${minutes} min`;
+      timeline.append(draft);
+    }
+
+    function clearScheduleDraft() {
+      history.querySelector(".schedule-draft")?.remove();
+    }
+
+    function createScheduleFromDrag() {
+      if (!scheduleDrag) return;
+      const startMinute = Math.min(1425, Math.min(scheduleDrag.startMinute, scheduleDrag.endMinute));
+      const endMinute = Math.max(scheduleDrag.startMinute, scheduleDrag.endMinute);
+      const minutes = Math.max(15, endMinute - startMinute);
+      const cappedMinutes = Math.min(minutes, 1440 - startMinute);
+      const startedAt = isoForSelectedDayMinute(startMinute);
+      const entry = normalizeSchedule({
+        id: crypto.randomUUID(),
+        task: "Planned task",
+        minutes: cappedMinutes,
+        startedAt,
+        endedAt: addMinutesToIso(startedAt, cappedMinutes)
+      });
+      scheduled = [...scheduled, entry].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+      editingId = entry.id;
+      saveSchedule();
+      renderLog({ preserveScroll: true });
     }
 
     startPause.addEventListener("click", () => {
@@ -668,22 +793,14 @@
       }
     });
 
-    document.querySelectorAll("[data-minutes]").forEach((button) => {
-      button.addEventListener("click", () => {
-        if (running) stopTimer();
-        minutesInput.value = button.dataset.minutes;
-        duration = Number(button.dataset.minutes) * 60;
-        elapsed = 0;
-        sessionStartedAt = null;
-        updateDisplay();
-      });
-    });
-
     modeButtons.forEach((button) => {
       button.addEventListener("click", () => setMode(button.dataset.mode));
     });
 
-    window.addEventListener("resize", syncSidePanelHeight);
+    window.addEventListener("resize", () => {
+      lockedTimerPanelHeight = null;
+      syncSidePanelHeight();
+    });
 
     exportCsv.addEventListener("click", exportHistoryCsv);
     importCsv.addEventListener("click", () => csvFile.click());
@@ -702,6 +819,38 @@
       syncSidePanelHeight();
     });
 
+    history.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest(".task-block, button")) return;
+      const timeline = event.target.closest(".timeline");
+      if (!timeline) return;
+      const startMinute = timelineMinuteFromEvent(event, timeline);
+      scheduleDrag = {
+        timeline,
+        startMinute,
+        endMinute: Math.min(1440, startMinute + 15)
+      };
+      timeline.setPointerCapture(event.pointerId);
+      renderScheduleDraft(timeline, scheduleDrag.startMinute, scheduleDrag.endMinute);
+    });
+
+    history.addEventListener("pointermove", (event) => {
+      if (!scheduleDrag) return;
+      scheduleDrag.endMinute = timelineMinuteFromEvent(event, scheduleDrag.timeline);
+      renderScheduleDraft(scheduleDrag.timeline, scheduleDrag.startMinute, scheduleDrag.endMinute);
+    });
+
+    history.addEventListener("pointerup", () => {
+      if (!scheduleDrag) return;
+      clearScheduleDraft();
+      createScheduleFromDrag();
+      scheduleDrag = null;
+    });
+
+    history.addEventListener("pointercancel", () => {
+      scheduleDrag = null;
+      clearScheduleDraft();
+    });
+
     editModal.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-action]");
       if (!button) return;
@@ -710,8 +859,10 @@
       if (action === "cancel") editingId = null;
       if (action === "delete") {
         completed = completed.filter((entry) => entry.id !== id);
+        scheduled = scheduled.filter((entry) => entry.id !== id);
         if (editingId === id) editingId = null;
         saveLog();
+        saveSchedule();
       }
       renderLog({ preserveScroll: true });
     });
@@ -731,21 +882,27 @@
       const form = event.target.closest(".edit-form");
       if (!form) return;
       const id = form.dataset.id;
+      const type = form.dataset.type;
       const nextStartedAt = fromDateTimeLocal(form.elements.startedAt.value);
       const nextMinutes = Math.max(1, Number.parseInt(form.elements.minutes.value, 10) || 1);
-      completed = completed.map((entry) => {
-        if (entry.id !== id) return entry;
-        return {
-          ...entry,
-          task: form.elements.task.value.trim() || "Untitled task",
-          startedAt: nextStartedAt,
-          endedAt: addMinutesToIso(nextStartedAt, nextMinutes),
-          minutes: nextMinutes
-        };
-      });
+      const updateEntry = (entry) => entry.id === id
+        ? {
+            ...entry,
+            task: form.elements.task.value.trim() || "Untitled task",
+            startedAt: nextStartedAt,
+            endedAt: addMinutesToIso(nextStartedAt, nextMinutes),
+            minutes: nextMinutes
+          }
+        : entry;
+      if (type === "schedule") {
+        scheduled = scheduled.map(updateEntry);
+        saveSchedule();
+      } else {
+        completed = completed.map(updateEntry);
+        saveLog();
+      }
       selectedDate = new Date(nextStartedAt);
       editingId = null;
-      saveLog();
       renderLog({ preserveScroll: true });
     });
 
