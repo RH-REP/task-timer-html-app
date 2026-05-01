@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Task Timer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <section class="app" aria-label="Task timer app">
+      <div class="timer-panel" id="timerPanel" data-mode="down">
+        <div class="topbar">
+          <h1>Task Timer</h1>
+          <div class="status" id="status">Ready</div>
+        </div>
+
+        <div class="mode-row" aria-label="Timer mode">
+          <button type="button" data-mode="down" aria-pressed="true">Countdown</button>
+          <button type="button" data-mode="up" aria-pressed="false">Count up</button>
+        </div>
+
+        <div class="task-row">
+          <div>
+            <label for="taskName">Task</label>
+            <input id="taskName" type="text" value="Deep work" autocomplete="off">
+          </div>
+          <div class="goal-field">
+            <label for="minutes" id="minutesLabel">Goal minutes</label>
+            <input id="minutes" type="number" min="1" max="240" value="25">
+          </div>
+        </div>
+
+        <div class="clock-wrap">
+          <div class="clock" id="clock" aria-live="polite">
+            <div>
+              <div class="time" id="time">25:00</div>
+              <div class="subtime" id="subtime">25 minutes planned</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="start-meta" id="startMeta">Start time will appear when the timer runs.</div>
+
+        <div class="controls" aria-label="Timer controls">
+          <button class="primary" id="startPause" type="button">Start</button>
+          <button id="reset" type="button">Reset</button>
+          <button id="finish" type="button">Finish</button>
+        </div>
+
+        <div class="preset-grid" aria-label="Timer presets">
+          <button type="button" data-minutes="5">5 min</button>
+          <button type="button" data-minutes="15">15 min</button>
+          <button type="button" data-minutes="25">25 min</button>
+          <button type="button" data-minutes="50">50 min</button>
+        </div>
+      </div>
+
+      <aside class="side-panel">
+        <div class="side-head">
+          <h2>History</h2>
+          <div class="history-tools" aria-label="History file tools">
+            <button class="tool-button" id="exportCsv" type="button">Export CSV</button>
+            <button class="tool-button" id="importCsv" type="button">Import CSV</button>
+            <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
+          </div>
+        </div>
+        <div class="import-note" id="importNote"></div>
+        <a class="download-link" id="downloadCsv" href="#" download>Download CSV</a>
+
+        <div class="date-nav" aria-label="History day">
+          <button id="prevDay" type="button" aria-label="Previous day">&lt;</button>
+          <div class="date-label" id="dateLabel">Today</div>
+          <button id="nextDay" type="button" aria-label="Next day">&gt;</button>
+        </div>
+
+        <div class="metric-grid">
+          <div class="metric">
+            <strong id="sessionCount">0</strong>
+            <span>Sessions</span>
+          </div>
+          <div class="metric">
+            <strong id="totalMinutes">0</strong>
+            <span>Minutes</span>
+          </div>
+        </div>
+
+        <div class="history" id="history" aria-label="Completed task history">
+          <div class="empty">Finished tasks will appear here.</div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const timerPanel = document.querySelector("#timerPanel");
+    const sidePanel = document.querySelector(".side-panel");
+    const taskName = document.querySelector("#taskName");
+    const minutesInput = document.querySelector("#minutes");
+    const minutesLabel = document.querySelector("#minutesLabel");
+    const timeDisplay = document.querySelector("#time");
+    const subtime = document.querySelector("#subtime");
+    const clock = document.querySelector("#clock");
+    const statusDisplay = document.querySelector("#status");
+    const startMeta = document.querySelector("#startMeta");
+    const startPause = document.querySelector("#startPause");
+    const resetButton = document.querySelector("#reset");
+    const finishButton = document.querySelector("#finish");
+    const exportCsv = document.querySelector("#exportCsv");
+    const importCsv = document.querySelector("#importCsv");
+    const csvFile = document.querySelector("#csvFile");
+    const importNote = document.querySelector("#importNote");
+    const downloadCsv = document.querySelector("#downloadCsv");
+    const prevDay = document.querySelector("#prevDay");
+    const nextDay = document.querySelector("#nextDay");
+    const dateLabel = document.querySelector("#dateLabel");
+    const history = document.querySelector("#history");
+    const sessionCount = document.querySelector("#sessionCount");
+    const totalMinutes = document.querySelector("#totalMinutes");
+    const modeButtons = document.querySelectorAll("[data-mode]");
+
+    let mode = "down";
+    let duration = 25 * 60;
+    let elapsed = 0;
+    let running = false;
+    let timerId = null;
+    let sessionStartedAt = null;
+    let editingId = null;
+    let selectedDate = new Date();
+    let exportUrl = null;
+    let completed = loadSavedLog();
+
+    function clampMinutes(value) {
+      const number = Number.parseInt(value, 10);
+      if (Number.isNaN(number)) return 25;
+      return Math.min(240, Math.max(1, number));
+    }
+
+    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60).toString().padStart(2, "0");
+      const secs = (seconds % 60).toString().padStart(2, "0");
+      return `${mins}:${secs}`;
+    }
+
+    function formatClockTime(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function formatCsvDate(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleDateString([], {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      });
+    }
+
+    function formatRange(start, end) {
+      const startTime = formatClockTime(start);
+      const endTime = formatClockTime(end);
+      return startTime && endTime ? `${startTime} - ${endTime}` : startTime || endTime || "Time not set";
+    }
+
+    function dateKey(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function selectedDateKey() {
+      return dateKey(selectedDate);
+    }
+
+    function changeSelectedDate(offset) {
+      const next = new Date(selectedDate);
+      next.setDate(next.getDate() + offset);
+      selectedDate = next;
+      editingId = null;
+      renderLog();
+    }
+
+    function formatDateLabel(date) {
+      const todayKey = dateKey(new Date());
+      const key = dateKey(date);
+      const dateText = date.toLocaleDateString([], {
+        weekday: "short",
+        month: "short",
+        day: "numeric"
+      });
+      return key === todayKey ? `Today, ${dateText}` : dateText;
+    }
+
+    function minutesSinceMidnight(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return 0;
+      return date.getHours() * 60 + date.getMinutes();
+    }
+
+    function toDateTimeLocal(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const offset = date.getTimezoneOffset() * 60000;
+      return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+    }
+
+    function fromDateTimeLocal(value) {
+      if (!value) return new Date().toISOString();
+      return new Date(value).toISOString();
+    }
+
+    function addMinutesToIso(startValue, minutesValue) {
+      const start = new Date(startValue);
+      const minutes = Math.max(1, Number.parseInt(minutesValue, 10) || 1);
+      if (Number.isNaN(start.getTime())) return new Date().toISOString();
+      return new Date(start.getTime() + minutes * 60000).toISOString();
+    }
+
+    function syncSidePanelHeight() {
+      if (window.matchMedia("(max-width: 820px)").matches) {
+        sidePanel.style.height = "";
+        return;
+      }
+      sidePanel.style.height = `${timerPanel.offsetHeight}px`;
+    }
+
+    function normalizeEntry(entry) {
+      const endedAt = entry.endedAt || new Date().toISOString();
+      const minutes = Math.max(1, Number.parseInt(entry.minutes, 10) || 1);
+      const startedAt = entry.startedAt || new Date(new Date(endedAt).getTime() - minutes * 60000).toISOString();
+      return {
+        id: entry.id || crypto.randomUUID(),
+        task: entry.task || "Untitled task",
+        mode: entry.mode || "down",
+        minutes,
+        startedAt,
+        endedAt
+      };
+    }
+
+    function entryKey(entry) {
+      return [
+        entry.task.trim().toLowerCase(),
+        new Date(entry.startedAt).toISOString(),
+        entry.minutes
+      ].join("|");
+    }
+
+    function saveLog() {
+      localStorage.setItem("taskTimerLog", JSON.stringify(completed));
+    }
+
+    function csvCell(value) {
+      const text = String(value ?? "");
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+
+    function buildCsv() {
+      const headers = [
+        "Date",
+        "Start",
+        "Finish",
+        "Minutes",
+        "Hours",
+        "Mode",
+        "Task",
+        "Started ISO",
+        "Finished ISO"
+      ];
+      const rows = completed
+        .slice()
+        .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt))
+        .map((entry) => [
+          formatCsvDate(entry.startedAt),
+          formatClockTime(entry.startedAt),
+          formatClockTime(entry.endedAt),
+          entry.minutes,
+          (entry.minutes / 60).toFixed(2),
+          entry.mode === "up" ? "Count up" : "Countdown",
+          entry.task,
+          entry.startedAt,
+          entry.endedAt
+        ]);
+      return "\ufeff" + [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    }
+
+    function exportHistoryCsv() {
+      const csv = buildCsv();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const filename = `task-history-${dateKey(new Date())}.csv`;
+      if (exportUrl) URL.revokeObjectURL(exportUrl);
+      exportUrl = URL.createObjectURL(blob);
+      downloadCsv.href = exportUrl;
+      downloadCsv.download = filename;
+      downloadCsv.textContent = `Download ${filename}`;
+      downloadCsv.dataset.ready = "true";
+      downloadCsv.click();
+      importNote.textContent = `CSV ready: ${completed.length} task${completed.length === 1 ? "" : "s"} included.`;
+    }
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let cell = "";
+      let quoted = false;
+      const source = text.replace(/^\ufeff/, "");
+      for (let index = 0; index < source.length; index += 1) {
+        const char = source[index];
+        const next = source[index + 1];
+        if (quoted) {
+          if (char === '"' && next === '"') {
+            cell += '"';
+            index += 1;
+          } else if (char === '"') {
+            quoted = false;
+          } else {
+            cell += char;
+          }
+        } else if (char === '"') {
+          quoted = true;
+        } else if (char === ",") {
+          row.push(cell);
+          cell = "";
+        } else if (char === "\n") {
+          row.push(cell);
+          rows.push(row);
+          row = [];
+          cell = "";
+        } else if (char !== "\r") {
+          cell += char;
+        }
+      }
+      row.push(cell);
+      rows.push(row);
+      return rows.filter((items) => items.some((item) => item.trim() !== ""));
+    }
+
+    function rowToEntry(headers, row) {
+      const value = (name) => row[headers.indexOf(name)] || "";
+      const startedIso = value("Started ISO");
+      const finishedIso = value("Finished ISO");
+      const minutes = Math.max(1, Number.parseInt(value("Minutes"), 10) || 1);
+      const startedAt = startedIso || new Date().toISOString();
+      const endedAt = finishedIso || addMinutesToIso(startedAt, minutes);
+      const modeText = value("Mode").toLowerCase();
+      return normalizeEntry({
+        id: crypto.randomUUID(),
+        task: value("Task") || "Imported task",
+        mode: modeText.includes("up") ? "up" : "down",
+        minutes,
+        startedAt,
+        endedAt
+      });
+    }
+
+    function importHistoryCsv(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.addEventListener("load", () => {
+        try {
+          const rows = parseCsv(String(reader.result || ""));
+          const headers = rows.shift()?.map((header) => header.trim()) || [];
+          if (!headers.includes("Task") || !headers.includes("Started ISO") || !headers.includes("Minutes")) {
+            importNote.textContent = "Import skipped: CSV needs Task, Minutes, and Started ISO columns.";
+            return;
+          }
+          const existing = new Set(completed.map(entryKey));
+          const imported = rows
+            .map((row) => rowToEntry(headers, row))
+            .filter((entry) => {
+              const key = entryKey(entry);
+              if (existing.has(key)) return false;
+              existing.add(key);
+              return true;
+            });
+          completed = [...completed, ...imported].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)).slice(0, 300);
+          if (imported.length) selectedDate = new Date(imported[0].startedAt);
+          saveLog();
+          renderLog();
+          importNote.textContent = `Imported ${imported.length} new task${imported.length === 1 ? "" : "s"}.`;
+        } catch {
+          importNote.textContent = "Import failed: CSV could not be read.";
+        } finally {
+          csvFile.value = "";
+        }
+      });
+      reader.readAsText(file);
+    }
+
+    function setGoalFromInput() {
+      const minutes = clampMinutes(minutesInput.value);
+      minutesInput.value = minutes;
+      duration = minutes * 60;
+      if (mode === "down") elapsed = Math.min(elapsed, duration);
+      updateDisplay();
+    }
+
+    function setMode(nextMode) {
+      if (mode === nextMode) return;
+      stopTimer();
+      mode = nextMode;
+      elapsed = 0;
+      sessionStartedAt = null;
+      timerPanel.dataset.mode = mode;
+      modeButtons.forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
+      });
+      minutesLabel.textContent = "Goal minutes";
+      updateDisplay();
+      syncSidePanelHeight();
+    }
+
+    function updateDisplay() {
+      const visibleSeconds = mode === "down" ? Math.max(0, duration - elapsed) : elapsed;
+      const progress = mode === "down"
+        ? (duration === 0 ? 0 : (elapsed / duration) * 360)
+        : Math.min(360, (elapsed / duration) * 360);
+
+      timeDisplay.textContent = formatTime(visibleSeconds);
+      clock.style.setProperty("--progress", `${progress}deg`);
+      if (mode === "down") {
+        const minutesLeft = Math.ceil(visibleSeconds / 60);
+        subtime.textContent = `${minutesLeft} minute${minutesLeft === 1 ? "" : "s"} left`;
+      } else {
+        const minutesFocused = Math.floor(elapsed / 60);
+        subtime.textContent = `${minutesFocused} minute${minutesFocused === 1 ? "" : "s"} focused`;
+      }
+
+      statusDisplay.textContent = running ? "Running" : elapsed === 0 ? "Ready" : "Paused";
+      startPause.textContent = running ? "Pause" : "Start";
+      startMeta.textContent = sessionStartedAt
+        ? `Started ${formatClockTime(sessionStartedAt)}`
+        : "Start time will appear when the timer runs.";
+      document.title = `${formatTime(visibleSeconds)} - Task Timer`;
+    }
+
+    function stopTimer() {
+      running = false;
+      window.clearInterval(timerId);
+      timerId = null;
+      updateDisplay();
+    }
+
+    function startTimer() {
+      if (mode === "down") setGoalFromInput();
+      if (mode === "down" && elapsed >= duration) elapsed = 0;
+      if (!sessionStartedAt) sessionStartedAt = new Date().toISOString();
+      running = true;
+      timerId = window.setInterval(() => {
+        elapsed += 1;
+        if (mode === "down" && elapsed >= duration) {
+          elapsed = duration;
+          stopTimer();
+          recordSession();
+          elapsed = 0;
+          sessionStartedAt = null;
+        }
+        updateDisplay();
+      }, 1000);
+      updateDisplay();
+    }
+
+    function recordSession() {
+      if (elapsed <= 0) return;
+      const endedAt = new Date().toISOString();
+      const startedAt = sessionStartedAt || new Date(new Date(endedAt).getTime() - elapsed * 1000).toISOString();
+      const entry = {
+        id: crypto.randomUUID(),
+        task: taskName.value.trim() || "Untitled task",
+        mode,
+        minutes: Math.max(1, Math.ceil(elapsed / 60)),
+        startedAt,
+        endedAt
+      };
+      completed = [entry, ...completed].slice(0, 300);
+      selectedDate = new Date(entry.startedAt);
+      saveLog();
+      renderLog();
+    }
+
+    function finishSession() {
+      if (elapsed <= 0) return;
+      stopTimer();
+      recordSession();
+      elapsed = 0;
+      sessionStartedAt = null;
+      updateDisplay();
+    }
+
+    function renderLog() {
+      const dayEntries = completed
+        .filter((entry) => dateKey(entry.startedAt) === selectedDateKey())
+        .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+      const total = dayEntries.reduce((sum, entry) => sum + entry.minutes, 0);
+      dateLabel.textContent = formatDateLabel(selectedDate);
+      sessionCount.textContent = dayEntries.length;
+      totalMinutes.textContent = total;
+
+      if (!dayEntries.length) {
+        history.innerHTML = '<div class="empty">No completed tasks on this day.</div>';
+        syncSidePanelHeight();
+        return;
+      }
+
+      const startHour = 0;
+      const hourHeight = 42;
+      const hourCount = 24;
+      const gridRows = Array.from({ length: hourCount }, (_, index) => {
+        const hour = startHour + index;
+        const label = `${String(hour).padStart(2, "0")}:00`;
+        return `
+          <div class="hour-row">
+            <div class="hour-label">${label}</div>
+            <div class="hour-cell"></div>
+          </div>
+        `;
+      }).join("");
+      const lanes = [];
+      const positionedEntries = dayEntries.map((entry) => {
+        const start = minutesSinceMidnight(entry.startedAt);
+        const end = start + entry.minutes;
+        let lane = lanes.findIndex((laneEnd) => start >= laneEnd);
+        if (lane === -1) {
+          lane = lanes.length;
+          lanes.push(end);
+        } else {
+          lanes[lane] = end;
+        }
+        return { ...entry, lane };
+      });
+      const laneCount = Math.max(1, lanes.length);
+      const blocks = positionedEntries.map((entry) => {
+        const startMinutes = minutesSinceMidnight(entry.startedAt) - startHour * 60;
+        const top = Math.max(0, (startMinutes / 60) * hourHeight);
+        const height = Math.max(72, (entry.minutes / 60) * hourHeight);
+        const left = `calc(64px + ((100% - 74px) / ${laneCount}) * ${entry.lane})`;
+        const right = `calc(10px + ((100% - 74px) / ${laneCount}) * ${laneCount - entry.lane - 1})`;
+        return `
+          <article class="task-block" style="top: ${top}px; height: ${height}px; left: ${left}; right: ${right};" data-id="${entry.id}">
+            <strong>${escapeHtml(entry.task)}</strong>
+            <span>${formatRange(entry.startedAt, entry.endedAt)}</span>
+            <div class="duration">${entry.minutes} min</div>
+            <button class="menu-button" type="button" data-action="edit" data-id="${entry.id}">Edit</button>
+          </article>
+        `;
+      }).join("");
+      const editEntry = dayEntries.find((entry) => entry.id === editingId);
+
+      history.innerHTML = `
+        <div class="timeline" style="--hour-height: ${hourHeight}px;">
+          <div class="time-grid">${gridRows}</div>
+          ${blocks}
+        </div>
+        ${editEntry ? renderEditEntry(editEntry) : ""}
+      `;
+      syncSidePanelHeight();
+    }
+
+    function renderEditEntry(entry) {
+      return `
+        <section class="edit-panel" data-id="${entry.id}">
+          <div class="edit-panel-head">
+            <div>
+              <strong>Edit finished task</strong>
+              <span>${entry.mode === "up" ? "Count up" : "Countdown"} session</span>
+            </div>
+            <div class="duration">${entry.minutes} min</div>
+          </div>
+          <form class="edit-form" data-id="${entry.id}">
+            <div class="full">
+              <label for="edit-task-${entry.id}">Task</label>
+              <input id="edit-task-${entry.id}" name="task" type="text" value="${escapeAttr(entry.task)}">
+            </div>
+            <div>
+              <label for="edit-start-${entry.id}">Start time</label>
+              <input id="edit-start-${entry.id}" name="startedAt" type="datetime-local" value="${toDateTimeLocal(entry.startedAt)}">
+            </div>
+            <div>
+              <label for="edit-minutes-${entry.id}">Minutes</label>
+              <input id="edit-minutes-${entry.id}" name="minutes" type="number" min="1" max="1440" value="${entry.minutes}">
+            </div>
+            <div class="full">
+              <label>Calculated finish</label>
+              <div class="finish-preview" data-finish-preview>${formatClockTime(entry.endedAt)}</div>
+            </div>
+            <div class="edit-buttons">
+              <button class="small-button danger" type="button" data-action="delete" data-id="${entry.id}">Delete</button>
+              <button class="small-button" type="button" data-action="cancel" data-id="${entry.id}">Cancel</button>
+              <button class="small-button primary" type="submit">Save</button>
+            </div>
+          </form>
+        </section>
+      `;
+    }
+
+    function loadSavedLog() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("taskTimerLog") || "[]");
+        return Array.isArray(saved) ? saved.map(normalizeEntry) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#039;"
+      }[char]));
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, "&#096;");
+    }
+
+    startPause.addEventListener("click", () => {
+      if (running) {
+        stopTimer();
+      } else {
+        startTimer();
+      }
+    });
+
+    resetButton.addEventListener("click", () => {
+      stopTimer();
+      duration = clampMinutes(minutesInput.value) * 60;
+      elapsed = 0;
+      sessionStartedAt = null;
+      updateDisplay();
+    });
+
+    finishButton.addEventListener("click", finishSession);
+
+    minutesInput.addEventListener("change", () => {
+      if (!running) {
+        duration = clampMinutes(minutesInput.value) * 60;
+        if (mode === "down") elapsed = Math.min(elapsed, duration);
+        updateDisplay();
+      }
+    });
+
+    document.querySelectorAll("[data-minutes]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (running) stopTimer();
+        minutesInput.value = button.dataset.minutes;
+        duration = Number(button.dataset.minutes) * 60;
+        elapsed = 0;
+        sessionStartedAt = null;
+        updateDisplay();
+      });
+    });
+
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => setMode(button.dataset.mode));
+    });
+
+    window.addEventListener("resize", syncSidePanelHeight);
+
+    exportCsv.addEventListener("click", exportHistoryCsv);
+    importCsv.addEventListener("click", () => csvFile.click());
+    csvFile.addEventListener("change", () => importHistoryCsv(csvFile.files[0]));
+
+    prevDay.addEventListener("click", () => changeSelectedDate(-1));
+    nextDay.addEventListener("click", () => changeSelectedDate(1));
+
+    history.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const id = button.dataset.id;
+      const action = button.dataset.action;
+      if (action === "edit") editingId = id;
+      if (action === "cancel") editingId = null;
+      if (action === "delete") {
+        completed = completed.filter((entry) => entry.id !== id);
+        if (editingId === id) editingId = null;
+        saveLog();
+      }
+      renderLog();
+    });
+
+    history.addEventListener("input", (event) => {
+      const form = event.target.closest(".edit-form");
+      if (!form || !["startedAt", "minutes"].includes(event.target.name)) return;
+      const start = form.elements.startedAt.value;
+      const minutes = form.elements.minutes.value;
+      const preview = form.querySelector("[data-finish-preview]");
+      if (!start || !minutes || !preview) return;
+      preview.textContent = formatClockTime(addMinutesToIso(start, minutes));
+    });
+
+    history.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.target.closest(".edit-form");
+      if (!form) return;
+      const id = form.dataset.id;
+      const nextStartedAt = fromDateTimeLocal(form.elements.startedAt.value);
+      const nextMinutes = Math.max(1, Number.parseInt(form.elements.minutes.value, 10) || 1);
+      completed = completed.map((entry) => {
+        if (entry.id !== id) return entry;
+        return {
+          ...entry,
+          task: form.elements.task.value.trim() || "Untitled task",
+          startedAt: nextStartedAt,
+          endedAt: addMinutesToIso(nextStartedAt, nextMinutes),
+          minutes: nextMinutes
+        };
+      });
+      selectedDate = new Date(nextStartedAt);
+      editingId = null;
+      saveLog();
+      renderLog();
+    });
+
+    updateDisplay();
+    renderLog();
+    syncSidePanelHeight();
+  </script>
+</body>
+</html>
