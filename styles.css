@@ -463,6 +463,16 @@ button:active {
   overflow-x: hidden;
 }
 
+.timeline::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(64px + ((100% - 74px) / 2));
+  border-left: 1px dashed rgba(100, 113, 122, 0.34);
+  pointer-events: none;
+}
+
 .time-grid {
   display: grid;
 }

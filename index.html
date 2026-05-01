@@ -588,30 +588,41 @@
           </div>
         `;
       }).join("");
-      const lanes = [];
-      const dayItems = [
-        ...dayEntries.map((entry) => ({ ...entry, type: "finished" })),
-        ...daySchedules.map((entry) => ({ ...entry, type: "schedule" }))
-      ].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
-      const positionedEntries = dayItems.map((entry) => {
-        const start = minutesSinceMidnight(entry.startedAt);
-        const end = start + entry.minutes;
-        let lane = lanes.findIndex((laneEnd) => start >= laneEnd);
-        if (lane === -1) {
-          lane = lanes.length;
-          lanes.push(end);
-        } else {
-          lanes[lane] = end;
-        }
-        return { ...entry, lane };
-      });
-      const laneCount = Math.max(1, lanes.length);
+      const positionItems = (items, type) => {
+        const lanes = [];
+        const positioned = items.map((entry) => {
+          const start = minutesSinceMidnight(entry.startedAt);
+          const end = start + entry.minutes;
+          let lane = lanes.findIndex((laneEnd) => start >= laneEnd);
+          if (lane === -1) {
+            lane = lanes.length;
+            lanes.push(end);
+          } else {
+            lanes[lane] = end;
+          }
+          return { ...entry, lane, type };
+        });
+        return {
+          laneCount: Math.max(1, lanes.length),
+          positioned
+        };
+      };
+      const scheduleLayout = positionItems(daySchedules, "schedule");
+      const finishedLayout = positionItems(dayEntries, "finished");
+      const positionedEntries = [...scheduleLayout.positioned, ...finishedLayout.positioned]
+        .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
       const blocks = positionedEntries.map((entry) => {
         const startMinutes = minutesSinceMidnight(entry.startedAt) - startHour * 60;
         const top = Math.max(0, (startMinutes / 60) * hourHeight);
         const height = Math.max(72, (entry.minutes / 60) * hourHeight);
-        const left = `calc(64px + ((100% - 74px) / ${laneCount}) * ${entry.lane})`;
-        const right = `calc(10px + ((100% - 74px) / ${laneCount}) * ${laneCount - entry.lane - 1})`;
+        const laneCount = entry.type === "schedule" ? scheduleLayout.laneCount : finishedLayout.laneCount;
+        const laneWidth = `(100% - 74px) / ${laneCount * 2}`;
+        const left = entry.type === "schedule"
+          ? `calc(64px + (${laneWidth}) * ${entry.lane})`
+          : `calc(64px + ((100% - 74px) / 2) + (${laneWidth}) * ${entry.lane})`;
+        const right = entry.type === "schedule"
+          ? `calc(10px + ((100% - 74px) / 2) + (${laneWidth}) * ${laneCount - entry.lane - 1})`
+          : `calc(10px + (${laneWidth}) * ${laneCount - entry.lane - 1})`;
         const blockClass = entry.type === "schedule" ? "task-block schedule-block" : "task-block";
         const label = entry.type === "schedule" ? "Plan" : `${entry.minutes} min`;
         return `
@@ -623,7 +634,7 @@
           </article>
         `;
       }).join("");
-      const emptyHint = dayItems.length ? "" : '<div class="timeline-hint">Drag on the timetable to plan a task.</div>';
+      const emptyHint = dayEntries.length || daySchedules.length ? "" : '<div class="timeline-hint">Drag on the timetable to plan a task.</div>';
       history.innerHTML = `
         <div class="timeline" style="--hour-height: ${hourHeight}px;">
           <div class="time-grid">${gridRows}</div>
