@@ -384,7 +384,7 @@
           completed = [...completed, ...imported].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)).slice(0, 300);
           if (imported.length) selectedDate = new Date(imported[0].startedAt);
           saveLog();
-          renderLog();
+          renderLog({ preserveScroll: true });
           importNote.textContent = `Imported ${imported.length} new task${imported.length === 1 ? "" : "s"}.`;
         } catch {
           importNote.textContent = "Import failed: CSV could not be read.";
@@ -483,7 +483,7 @@
       completed = [entry, ...completed].slice(0, 300);
       selectedDate = new Date(entry.startedAt);
       saveLog();
-      renderLog();
+      renderLog({ preserveScroll: true });
     }
 
     function finishSession() {
@@ -495,7 +495,9 @@
       updateDisplay();
     }
 
-    function renderLog() {
+    function renderLog(options = {}) {
+      const previousTimeline = history.querySelector(".timeline");
+      const previousScrollTop = previousTimeline ? previousTimeline.scrollTop : 0;
       const dayEntries = completed
         .filter((entry) => dateKey(entry.startedAt) === selectedDateKey())
         .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
@@ -559,6 +561,10 @@
           ${blocks}
         </div>
       `;
+      if (options.preserveScroll) {
+        const nextTimeline = history.querySelector(".timeline");
+        if (nextTimeline) nextTimeline.scrollTop = previousScrollTop;
+      }
       renderEditModal();
       syncSidePanelHeight();
     }
@@ -705,7 +711,7 @@
         if (editingId === id) editingId = null;
         saveLog();
       }
-      renderLog();
+      renderLog({ preserveScroll: true });
     });
 
     editModal.addEventListener("input", (event) => {
@@ -738,7 +744,7 @@
       selectedDate = new Date(nextStartedAt);
       editingId = null;
       saveLog();
-      renderLog();
+      renderLog({ preserveScroll: true });
     });
 
     updateDisplay();
