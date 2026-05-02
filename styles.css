@@ -545,6 +545,11 @@ button:active {
   outline-offset: 1px;
 }
 
+.task-block.moving {
+  outline: 2px solid rgba(180, 83, 9, 0.28);
+  outline-offset: 1px;
+}
+
 .resize-handle {
   position: absolute;
   left: 0;

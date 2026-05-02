@@ -132,6 +132,7 @@
     let scheduled = loadSavedSchedule();
     let scheduleDrag = null;
     let resizeDrag = null;
+    let moveDrag = null;
     let suppressBlockClick = false;
     let lockedTimerPanelHeight = null;
     let editAnchor = null;
@@ -823,6 +824,17 @@
       return null;
     }
 
+    function updateTimelineEntry(id, type, updates) {
+      const applyUpdate = (entry) => entry.id === id ? { ...entry, ...updates } : entry;
+      if (type === "schedule") {
+        scheduled = scheduled.map(applyUpdate);
+        saveSchedule();
+      } else {
+        completed = completed.map(applyUpdate);
+        saveLog();
+      }
+    }
+
     function startBlockResize(event) {
       const handle = event.target.closest("[data-resize]");
       if (!handle || event.button !== 0) return false;
@@ -842,6 +854,30 @@
         endMinute
       };
       block.classList.add("resizing");
+      timeline.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return true;
+    }
+
+    function startBlockMove(event) {
+      if (event.button !== 0 || event.target.closest("[data-resize]")) return false;
+      const block = event.target.closest(".task-block");
+      const timeline = block?.closest(".timeline");
+      const found = block ? findTimelineEntry(block.dataset.id) : null;
+      if (!block || !timeline || !found) return false;
+      const startMinute = minutesSinceMidnight(found.entry.startedAt);
+      const durationMinutes = Math.max(15, Number.parseInt(found.entry.minutes, 10) || 15);
+      moveDrag = {
+        block,
+        timeline,
+        id: block.dataset.id,
+        type: found.type,
+        anchorMinute: timelineMinuteFromEvent(event, timeline),
+        originalStartMinute: startMinute,
+        nextStartMinute: startMinute,
+        durationMinutes
+      };
+      block.classList.add("moving");
       timeline.setPointerCapture(event.pointerId);
       event.preventDefault();
       return true;
@@ -867,21 +903,11 @@
       if (!resizeDrag) return;
       const startedAt = isoForSelectedDayMinute(resizeDrag.startMinute);
       const minutes = Math.max(15, resizeDrag.endMinute - resizeDrag.startMinute);
-      const updateEntry = (entry) => entry.id === resizeDrag.id
-        ? {
-            ...entry,
-            startedAt,
-            endedAt: addMinutesToIso(startedAt, minutes),
-            minutes
-          }
-        : entry;
-      if (resizeDrag.type === "schedule") {
-        scheduled = scheduled.map(updateEntry);
-        saveSchedule();
-      } else {
-        completed = completed.map(updateEntry);
-        saveLog();
-      }
+      updateTimelineEntry(resizeDrag.id, resizeDrag.type, {
+        startedAt,
+        endedAt: addMinutesToIso(startedAt, minutes),
+        minutes
+      });
       resizeDrag.block.classList.remove("resizing");
       resizeDrag = null;
       suppressBlockClick = true;
@@ -889,6 +915,39 @@
       window.setTimeout(() => {
         suppressBlockClick = false;
       }, 0);
+    }
+
+    function previewBlockMove(event) {
+      if (!moveDrag) return;
+      const currentMinute = timelineMinuteFromEvent(event, moveDrag.timeline);
+      const delta = currentMinute - moveDrag.anchorMinute;
+      const maxStart = Math.max(0, 1440 - moveDrag.durationMinutes);
+      moveDrag.nextStartMinute = Math.max(0, Math.min(maxStart, moveDrag.originalStartMinute + delta));
+      const hourHeight = Number.parseFloat(getComputedStyle(moveDrag.timeline).getPropertyValue("--hour-height")) || 42;
+      const headerHeight = Number.parseFloat(getComputedStyle(moveDrag.timeline).getPropertyValue("--timeline-header-height")) || 0;
+      moveDrag.block.style.top = `${headerHeight + (moveDrag.nextStartMinute / 60) * hourHeight}px`;
+    }
+
+    function finishBlockMove() {
+      if (!moveDrag) return;
+      const didMove = moveDrag.nextStartMinute !== moveDrag.originalStartMinute;
+      const movedBlock = moveDrag.block;
+      if (didMove) {
+        const startedAt = isoForSelectedDayMinute(moveDrag.nextStartMinute);
+        updateTimelineEntry(moveDrag.id, moveDrag.type, {
+          startedAt,
+          endedAt: addMinutesToIso(startedAt, moveDrag.durationMinutes)
+        });
+        suppressBlockClick = true;
+      }
+      movedBlock.classList.remove("moving");
+      moveDrag = null;
+      if (didMove) {
+        renderLog({ preserveScroll: true });
+        window.setTimeout(() => {
+          suppressBlockClick = false;
+        }, 0);
+      }
     }
 
     function createEntryFromDrag() {
@@ -983,6 +1042,7 @@
 
     history.addEventListener("pointerdown", (event) => {
       if (startBlockResize(event)) return;
+      if (startBlockMove(event)) return;
       if (event.button !== 0 || event.target.closest(".task-block, button")) return;
       const timeline = event.target.closest(".timeline");
       if (!timeline) return;
@@ -1004,6 +1064,10 @@
         previewBlockResize(event);
         return;
       }
+      if (moveDrag) {
+        previewBlockMove(event);
+        return;
+      }
       if (!scheduleDrag) return;
       scheduleDrag.anchor = { x: event.pageX, y: event.pageY };
       scheduleDrag.endMinute = timelineMinuteFromEvent(event, scheduleDrag.timeline);
@@ -1013,6 +1077,10 @@
     history.addEventListener("pointerup", () => {
       if (resizeDrag) {
         finishBlockResize();
+        return;
+      }
+      if (moveDrag) {
+        finishBlockMove();
         return;
       }
       if (!scheduleDrag) return;
@@ -1025,6 +1093,10 @@
       if (resizeDrag) {
         resizeDrag.block.classList.remove("resizing");
         resizeDrag = null;
+      }
+      if (moveDrag) {
+        moveDrag.block.classList.remove("moving");
+        moveDrag = null;
       }
       scheduleDrag = null;
       clearScheduleDraft();
