@@ -134,6 +134,7 @@
     let scheduled = loadSavedSchedule();
     let scheduleDrag = null;
     let lockedTimerPanelHeight = null;
+    let editAnchor = null;
 
     function clampMinutes(value) {
       const number = Number.parseInt(value, 10);
@@ -187,6 +188,7 @@
       next.setDate(next.getDate() + offset);
       selectedDate = next;
       editingId = null;
+      editAnchor = null;
       renderLog();
     }
 
@@ -257,7 +259,8 @@
         mode: entry.mode || "down",
         minutes,
         startedAt,
-        endedAt
+        endedAt,
+        note: entry.note || ""
       };
     }
 
@@ -270,7 +273,8 @@
         task: entry.task || "Planned task",
         minutes,
         startedAt,
-        endedAt
+        endedAt,
+        note: entry.note || ""
       };
     }
 
@@ -305,6 +309,7 @@
         "Hours",
         "Mode",
         "Task",
+        "Note",
         "Started ISO",
         "Finished ISO"
       ];
@@ -320,8 +325,9 @@
           formatClockTime(entry.endedAt),
           entry.minutes,
           (entry.minutes / 60).toFixed(2),
-          entry.type === "Schedule" ? "Planned" : entry.mode === "up" ? "Count up" : "Countdown",
+          entry.type === "Schedule" ? "Planned" : entry.mode === "manual" ? "Manual" : entry.mode === "up" ? "Count up" : "Countdown",
           entry.task,
+          entry.note || "",
           entry.startedAt,
           entry.endedAt
         ]);
@@ -394,6 +400,7 @@
           entry: normalizeSchedule({
             id: crypto.randomUUID(),
             task: value("Task") || "Imported plan",
+            note: value("Note"),
             minutes,
             startedAt,
             endedAt
@@ -405,7 +412,8 @@
         entry: normalizeEntry({
           id: crypto.randomUUID(),
           task: value("Task") || "Imported task",
-          mode: modeText.includes("up") ? "up" : "down",
+          mode: modeText.includes("manual") ? "manual" : modeText.includes("up") ? "up" : "down",
+          note: value("Note"),
           minutes,
           startedAt,
           endedAt
@@ -624,19 +632,21 @@
           ? `calc(10px + ((100% - 74px) / 2) + (${laneWidth}) * ${laneCount - entry.lane - 1})`
           : `calc(10px + (${laneWidth}) * ${laneCount - entry.lane - 1})`;
         const blockClass = entry.type === "schedule" ? "task-block schedule-block" : "task-block";
-        const label = entry.type === "schedule" ? "Plan" : `${entry.minutes} min`;
         return `
           <article class="${blockClass}" style="top: ${top}px; height: ${height}px; left: ${left}; right: ${right};" data-id="${entry.id}" data-type="${entry.type}">
             <strong>${escapeHtml(entry.task)}</strong>
             <span>${formatRange(entry.startedAt, entry.endedAt)}</span>
-            <div class="duration">${label}</div>
-            <button class="menu-button" type="button" data-action="edit" data-id="${entry.id}">Edit</button>
+            ${entry.note ? `<div class="block-note">${escapeHtml(entry.note)}</div>` : ""}
           </article>
         `;
       }).join("");
       const emptyHint = dayEntries.length || daySchedules.length ? "" : '<div class="timeline-hint">Drag on the timetable to plan a task.</div>';
       history.innerHTML = `
         <div class="timeline" style="--hour-height: ${hourHeight}px;">
+          <div class="timeline-columns" aria-hidden="true">
+            <span>Plan</span>
+            <span>Activity</span>
+          </div>
           <div class="time-grid">${gridRows}</div>
           ${emptyHint}
           ${blocks}
@@ -657,10 +667,42 @@
       if (!entry) {
         editModal.hidden = true;
         editModal.innerHTML = "";
+        editModal.style.left = "";
+        editModal.style.top = "";
+        editModal.style.right = "";
         return;
       }
       editModal.hidden = false;
       editModal.innerHTML = renderEditEntry(entry, scheduleEntry ? "schedule" : "finished");
+      positionEditModal();
+    }
+
+    function setEditAnchorFromEvent(event) {
+      editAnchor = { x: event.pageX, y: event.pageY };
+    }
+
+    function positionEditModal() {
+      if (!editAnchor || editModal.hidden) {
+        editModal.style.left = "";
+        editModal.style.top = "";
+        editModal.style.right = "";
+        return;
+      }
+      const gap = 12;
+      const margin = 16;
+      const width = editModal.offsetWidth || 360;
+      const height = Math.min(editModal.offsetHeight || 360, window.innerHeight - margin * 2);
+      const minLeft = window.scrollX + margin;
+      const maxLeft = window.scrollX + window.innerWidth - width - margin;
+      const minTop = window.scrollY + margin;
+      const maxTop = window.scrollY + window.innerHeight - height - margin;
+      let left = editAnchor.x + gap;
+      if (left > maxLeft) left = editAnchor.x - width - gap;
+      left = Math.max(minLeft, Math.min(left, maxLeft));
+      const top = Math.max(minTop, Math.min(editAnchor.y + gap, maxTop));
+      editModal.style.left = `${left}px`;
+      editModal.style.top = `${top}px`;
+      editModal.style.right = "auto";
     }
 
     function renderEditEntry(entry, type) {
@@ -670,7 +712,7 @@
           <div class="edit-panel-head">
             <div>
               <strong>${isSchedule ? "Edit schedule" : "Edit finished task"}</strong>
-              <span>${isSchedule ? "Planned task" : `${entry.mode === "up" ? "Count up" : "Countdown"} session`}</span>
+              <span>${isSchedule ? "Planned task" : entry.mode === "manual" ? "Manual activity log" : `${entry.mode === "up" ? "Count up" : "Countdown"} session`}</span>
             </div>
             <div class="duration">${entry.minutes} min</div>
           </div>
@@ -690,6 +732,10 @@
             <div class="full">
               <label>Calculated finish</label>
               <div class="finish-preview" data-finish-preview>${formatClockTime(entry.endedAt)}</div>
+            </div>
+            <div class="full">
+              <label for="edit-note-${entry.id}">Note</label>
+              <textarea id="edit-note-${entry.id}" name="note" rows="3">${escapeHtml(entry.note || "")}</textarea>
             </div>
             <div class="edit-buttons">
               <button class="small-button danger" type="button" data-action="delete" data-id="${entry.id}">Delete</button>
@@ -740,14 +786,22 @@
       return Math.max(0, Math.min(1440, Math.round(rawMinutes / 15) * 15));
     }
 
-    function renderScheduleDraft(timeline, startMinute, endMinute) {
+    function timelineDragTypeFromEvent(event, timeline) {
+      const rect = timeline.getBoundingClientRect();
+      const taskAreaLeft = rect.left + 64;
+      const taskAreaRight = rect.right - 10;
+      const taskAreaCenter = taskAreaLeft + (taskAreaRight - taskAreaLeft) / 2;
+      return event.clientX >= taskAreaCenter ? "finished" : "schedule";
+    }
+
+    function renderScheduleDraft(timeline, startMinute, endMinute, type) {
       const existing = timeline.querySelector(".schedule-draft");
       if (existing) existing.remove();
       const topMinute = Math.min(startMinute, endMinute);
       const minutes = Math.max(15, Math.abs(endMinute - startMinute));
       const hourHeight = Number.parseFloat(getComputedStyle(timeline).getPropertyValue("--hour-height")) || 42;
       const draft = document.createElement("div");
-      draft.className = "schedule-draft";
+      draft.className = type === "finished" ? "schedule-draft activity-draft" : "schedule-draft";
       draft.style.top = `${(topMinute / 60) * hourHeight}px`;
       draft.style.height = `${Math.max(24, (minutes / 60) * hourHeight)}px`;
       draft.textContent = `${minutes} min`;
@@ -758,13 +812,29 @@
       history.querySelector(".schedule-draft")?.remove();
     }
 
-    function createScheduleFromDrag() {
+    function createEntryFromDrag() {
       if (!scheduleDrag) return;
       const startMinute = Math.min(1425, Math.min(scheduleDrag.startMinute, scheduleDrag.endMinute));
       const endMinute = Math.max(scheduleDrag.startMinute, scheduleDrag.endMinute);
       const minutes = Math.max(15, endMinute - startMinute);
       const cappedMinutes = Math.min(minutes, 1440 - startMinute);
       const startedAt = isoForSelectedDayMinute(startMinute);
+      if (scheduleDrag.type === "finished") {
+        const entry = normalizeEntry({
+          id: crypto.randomUUID(),
+          task: "Activity log",
+          mode: "manual",
+          minutes: cappedMinutes,
+          startedAt,
+          endedAt: addMinutesToIso(startedAt, cappedMinutes)
+        });
+        completed = [entry, ...completed].slice(0, 300);
+        editingId = entry.id;
+        editAnchor = scheduleDrag.anchor;
+        saveLog();
+        renderLog({ preserveScroll: true });
+        return;
+      }
       const entry = normalizeSchedule({
         id: crypto.randomUUID(),
         task: "Planned task",
@@ -774,6 +844,7 @@
       });
       scheduled = [...scheduled, entry].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
       editingId = entry.id;
+      editAnchor = scheduleDrag.anchor;
       saveSchedule();
       renderLog({ preserveScroll: true });
     }
@@ -811,6 +882,7 @@
     window.addEventListener("resize", () => {
       lockedTimerPanelHeight = null;
       syncSidePanelHeight();
+      positionEditModal();
     });
 
     exportCsv.addEventListener("click", exportHistoryCsv);
@@ -821,11 +893,10 @@
     nextDay.addEventListener("click", () => changeSelectedDate(1));
 
     history.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-action]");
-      if (!button) return;
-      const id = button.dataset.id;
-      const action = button.dataset.action;
-      if (action === "edit") editingId = id;
+      const block = event.target.closest(".task-block");
+      if (!block) return;
+      editingId = block.dataset.id;
+      setEditAnchorFromEvent(event);
       renderEditModal();
       syncSidePanelHeight();
     });
@@ -835,25 +906,29 @@
       const timeline = event.target.closest(".timeline");
       if (!timeline) return;
       const startMinute = timelineMinuteFromEvent(event, timeline);
+      const type = timelineDragTypeFromEvent(event, timeline);
       scheduleDrag = {
         timeline,
+        type,
+        anchor: { x: event.pageX, y: event.pageY },
         startMinute,
         endMinute: Math.min(1440, startMinute + 15)
       };
       timeline.setPointerCapture(event.pointerId);
-      renderScheduleDraft(timeline, scheduleDrag.startMinute, scheduleDrag.endMinute);
+      renderScheduleDraft(timeline, scheduleDrag.startMinute, scheduleDrag.endMinute, scheduleDrag.type);
     });
 
     history.addEventListener("pointermove", (event) => {
       if (!scheduleDrag) return;
+      scheduleDrag.anchor = { x: event.pageX, y: event.pageY };
       scheduleDrag.endMinute = timelineMinuteFromEvent(event, scheduleDrag.timeline);
-      renderScheduleDraft(scheduleDrag.timeline, scheduleDrag.startMinute, scheduleDrag.endMinute);
+      renderScheduleDraft(scheduleDrag.timeline, scheduleDrag.startMinute, scheduleDrag.endMinute, scheduleDrag.type);
     });
 
     history.addEventListener("pointerup", () => {
       if (!scheduleDrag) return;
       clearScheduleDraft();
-      createScheduleFromDrag();
+      createEntryFromDrag();
       scheduleDrag = null;
     });
 
@@ -867,15 +942,27 @@
       if (!button) return;
       const id = button.dataset.id;
       const action = button.dataset.action;
-      if (action === "cancel") editingId = null;
+      if (action === "cancel") {
+        editingId = null;
+        editAnchor = null;
+      }
       if (action === "delete") {
         completed = completed.filter((entry) => entry.id !== id);
         scheduled = scheduled.filter((entry) => entry.id !== id);
         if (editingId === id) editingId = null;
+        editAnchor = null;
         saveLog();
         saveSchedule();
       }
       renderLog({ preserveScroll: true });
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || editModal.hidden) return;
+      editingId = null;
+      editAnchor = null;
+      renderEditModal();
+      syncSidePanelHeight();
     });
 
     editModal.addEventListener("input", (event) => {
@@ -900,6 +987,7 @@
         ? {
             ...entry,
             task: form.elements.task.value.trim() || "Untitled task",
+            note: form.elements.note.value.trim(),
             startedAt: nextStartedAt,
             endedAt: addMinutesToIso(nextStartedAt, nextMinutes),
             minutes: nextMinutes
@@ -914,6 +1002,7 @@
       }
       selectedDate = new Date(nextStartedAt);
       editingId = null;
+      editAnchor = null;
       renderLog({ preserveScroll: true });
     });
 
