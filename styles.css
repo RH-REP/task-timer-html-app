@@ -84,18 +84,6 @@ h2 {
   font-size: 1.05rem;
 }
 
-.status {
-  min-width: 96px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-  font-size: 0.83rem;
-  font-weight: 700;
-  text-align: center;
-}
-
 label {
   display: block;
   margin-bottom: 8px;
@@ -543,14 +531,35 @@ button:active {
   position: absolute;
   left: 64px;
   right: 10px;
-  min-height: 72px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px 10px;
+  border-radius: 6px;
+  padding: 4px 7px;
   background: #ffffff;
   box-shadow: 0 8px 20px rgba(23, 32, 38, 0.08);
   cursor: pointer;
   overflow: hidden;
+}
+
+.task-block.resizing {
+  outline: 2px solid rgba(15, 118, 110, 0.28);
+  outline-offset: 1px;
+}
+
+.resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.resize-top {
+  top: 0;
+}
+
+.resize-bottom {
+  bottom: 0;
 }
 
 .schedule-block {
@@ -602,30 +611,23 @@ button:active {
 
 .task-block strong {
   display: block;
-  overflow-wrap: anywhere;
-  font-size: 0.9rem;
-  line-height: 1.08;
-}
-
-.task-block span {
-  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  font-size: 0.74rem;
+  line-height: 1.05;
   white-space: nowrap;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 700;
 }
 
 .block-note {
-  max-height: 3.45em;
-  margin-top: 6px;
+  max-height: 2.4em;
+  margin-top: 3px;
   padding-right: 4px;
   overflow-y: auto;
   color: var(--ink);
-  font-size: 0.75rem;
+  font-size: 0.66rem;
   font-weight: 650;
-  line-height: 1.15;
+  line-height: 1.1;
   white-space: pre-wrap;
 }
 
