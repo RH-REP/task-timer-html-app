@@ -133,10 +133,12 @@
     let scheduleDrag = null;
     let resizeDrag = null;
     let moveDrag = null;
+    let pendingCreatedEntry = null;
     let suppressBlockClick = false;
     let lockedTimerPanelHeight = null;
     let editAnchor = null;
     const moveDragThreshold = 6;
+    const createDragThreshold = 6;
 
     function clampMinutes(value) {
       const number = Number.parseInt(value, 10);
@@ -817,6 +819,11 @@
       history.querySelector(".schedule-draft")?.remove();
     }
 
+    function cancelScheduleDrag() {
+      scheduleDrag = null;
+      clearScheduleDraft();
+    }
+
     function findTimelineEntry(id) {
       const scheduleEntry = scheduled.find((entry) => entry.id === id);
       if (scheduleEntry) return { entry: scheduleEntry, type: "schedule" };
@@ -834,6 +841,21 @@
         completed = completed.map(applyUpdate);
         saveLog();
       }
+    }
+
+    function discardPendingCreatedEntry(id = editingId) {
+      if (!pendingCreatedEntry || pendingCreatedEntry.id !== id) return false;
+      if (pendingCreatedEntry.type === "schedule") {
+        scheduled = scheduled.filter((entry) => entry.id !== id);
+        saveSchedule();
+      } else {
+        completed = completed.filter((entry) => entry.id !== id);
+        saveLog();
+      }
+      pendingCreatedEntry = null;
+      if (editingId === id) editingId = null;
+      editAnchor = null;
+      return true;
     }
 
     function startBlockResize(event) {
@@ -969,7 +991,7 @@
     }
 
     function createEntryFromDrag() {
-      if (!scheduleDrag) return;
+      if (!scheduleDrag?.active) return;
       const startMinute = Math.min(1425, Math.min(scheduleDrag.startMinute, scheduleDrag.endMinute));
       const endMinute = Math.max(scheduleDrag.startMinute, scheduleDrag.endMinute);
       const minutes = Math.max(15, endMinute - startMinute);
@@ -986,6 +1008,7 @@
         });
         completed = [entry, ...completed].slice(0, 300);
         editingId = entry.id;
+        pendingCreatedEntry = { id: entry.id, type: "finished" };
         editAnchor = scheduleDrag.anchor;
         saveLog();
         renderLog({ preserveScroll: true });
@@ -1000,6 +1023,7 @@
       });
       scheduled = [...scheduled, entry].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
       editingId = entry.id;
+      pendingCreatedEntry = { id: entry.id, type: "schedule" };
       editAnchor = scheduleDrag.anchor;
       saveSchedule();
       renderLog({ preserveScroll: true });
@@ -1070,11 +1094,13 @@
         timeline,
         type,
         anchor: { x: event.pageX, y: event.pageY },
+        anchorPageX: event.pageX,
+        anchorPageY: event.pageY,
         startMinute,
-        endMinute: Math.min(1440, startMinute + 15)
+        endMinute: Math.min(1440, startMinute + 15),
+        active: false
       };
       timeline.setPointerCapture(event.pointerId);
-      renderScheduleDraft(timeline, scheduleDrag.startMinute, scheduleDrag.endMinute, scheduleDrag.type);
     });
 
     history.addEventListener("pointermove", (event) => {
@@ -1087,6 +1113,11 @@
         return;
       }
       if (!scheduleDrag) return;
+      const movedPixels = Math.hypot(event.pageX - scheduleDrag.anchorPageX, event.pageY - scheduleDrag.anchorPageY);
+      if (!scheduleDrag.active) {
+        if (movedPixels < createDragThreshold) return;
+        scheduleDrag.active = true;
+      }
       scheduleDrag.anchor = { x: event.pageX, y: event.pageY };
       scheduleDrag.endMinute = timelineMinuteFromEvent(event, scheduleDrag.timeline);
       renderScheduleDraft(scheduleDrag.timeline, scheduleDrag.startMinute, scheduleDrag.endMinute, scheduleDrag.type);
@@ -1116,8 +1147,7 @@
         moveDrag.block.classList.remove("moving");
         moveDrag = null;
       }
-      scheduleDrag = null;
-      clearScheduleDraft();
+      cancelScheduleDrag();
     });
 
     editModal.addEventListener("click", (event) => {
@@ -1126,12 +1156,15 @@
       const id = button.dataset.id;
       const action = button.dataset.action;
       if (action === "cancel") {
-        editingId = null;
-        editAnchor = null;
+        if (!discardPendingCreatedEntry(id)) {
+          editingId = null;
+          editAnchor = null;
+        }
       }
       if (action === "delete") {
         completed = completed.filter((entry) => entry.id !== id);
         scheduled = scheduled.filter((entry) => entry.id !== id);
+        if (pendingCreatedEntry?.id === id) pendingCreatedEntry = null;
         if (editingId === id) editingId = null;
         editAnchor = null;
         saveLog();
@@ -1141,7 +1174,17 @@
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || editModal.hidden) return;
+      if (event.key !== "Escape") return;
+      if (scheduleDrag) {
+        cancelScheduleDrag();
+        return;
+      }
+      if (editModal.hidden) return;
+      if (discardPendingCreatedEntry(editingId)) {
+        renderLog({ preserveScroll: true });
+        syncSidePanelHeight();
+        return;
+      }
       editingId = null;
       editAnchor = null;
       renderEditModal();
@@ -1184,6 +1227,7 @@
         saveLog();
       }
       selectedDate = new Date(nextStartedAt);
+      if (pendingCreatedEntry?.id === id) pendingCreatedEntry = null;
       editingId = null;
       editAnchor = null;
       renderLog({ preserveScroll: true });
