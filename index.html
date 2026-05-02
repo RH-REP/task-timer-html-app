@@ -136,6 +136,7 @@
     let suppressBlockClick = false;
     let lockedTimerPanelHeight = null;
     let editAnchor = null;
+    const moveDragThreshold = 6;
 
     function clampMinutes(value) {
       const number = Number.parseInt(value, 10);
@@ -873,13 +874,13 @@
         id: block.dataset.id,
         type: found.type,
         anchorMinute: timelineMinuteFromEvent(event, timeline),
+        anchorPageX: event.pageX,
+        anchorPageY: event.pageY,
         originalStartMinute: startMinute,
         nextStartMinute: startMinute,
-        durationMinutes
+        durationMinutes,
+        active: false
       };
-      block.classList.add("moving");
-      timeline.setPointerCapture(event.pointerId);
-      event.preventDefault();
       return true;
     }
 
@@ -919,6 +920,17 @@
 
     function previewBlockMove(event) {
       if (!moveDrag) return;
+      const movedPixels = Math.hypot(event.pageX - moveDrag.anchorPageX, event.pageY - moveDrag.anchorPageY);
+      if (!moveDrag.active) {
+        if (movedPixels < moveDragThreshold) return;
+        moveDrag.active = true;
+        moveDrag.block.classList.add("moving");
+        try {
+          moveDrag.block.setPointerCapture(event.pointerId);
+        } catch (error) {
+          // Some browsers reject delayed pointer capture; dragging still works inside the timeline.
+        }
+      }
       const currentMinute = timelineMinuteFromEvent(event, moveDrag.timeline);
       const delta = currentMinute - moveDrag.anchorMinute;
       const maxStart = Math.max(0, 1440 - moveDrag.durationMinutes);
@@ -926,24 +938,30 @@
       const hourHeight = Number.parseFloat(getComputedStyle(moveDrag.timeline).getPropertyValue("--hour-height")) || 42;
       const headerHeight = Number.parseFloat(getComputedStyle(moveDrag.timeline).getPropertyValue("--timeline-header-height")) || 0;
       moveDrag.block.style.top = `${headerHeight + (moveDrag.nextStartMinute / 60) * hourHeight}px`;
+      event.preventDefault();
     }
 
     function finishBlockMove() {
       if (!moveDrag) return;
-      const didMove = moveDrag.nextStartMinute !== moveDrag.originalStartMinute;
+      const didMove = moveDrag.active && moveDrag.nextStartMinute !== moveDrag.originalStartMinute;
       const movedBlock = moveDrag.block;
+      const shouldSuppressClick = moveDrag.active;
       if (didMove) {
         const startedAt = isoForSelectedDayMinute(moveDrag.nextStartMinute);
         updateTimelineEntry(moveDrag.id, moveDrag.type, {
           startedAt,
           endedAt: addMinutesToIso(startedAt, moveDrag.durationMinutes)
         });
-        suppressBlockClick = true;
       }
       movedBlock.classList.remove("moving");
       moveDrag = null;
+      if (shouldSuppressClick) {
+        suppressBlockClick = true;
+      }
       if (didMove) {
         renderLog({ preserveScroll: true });
+      }
+      if (shouldSuppressClick) {
         window.setTimeout(() => {
           suppressBlockClick = false;
         }, 0);
