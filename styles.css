@@ -454,8 +454,8 @@ button:active {
 .timeline::after {
   content: "";
   position: absolute;
-  top: 26px;
-  bottom: 0;
+  top: var(--timeline-header-height);
+  height: calc(var(--hour-height) * 24);
   left: calc(64px + ((100% - 74px) / 2));
   border-left: 1px dashed rgba(100, 113, 122, 0.34);
   pointer-events: none;

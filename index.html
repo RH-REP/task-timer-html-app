@@ -133,6 +133,8 @@
     let scheduleDrag = null;
     let resizeDrag = null;
     let moveDrag = null;
+    let liveSessionEntryId = null;
+    let liveSessionLoggedMinutes = 0;
     let pendingCreatedEntry = null;
     let suppressBlockClick = false;
     let lockedTimerPanelHeight = null;
@@ -230,6 +232,13 @@
       const minutes = Math.max(1, Number.parseInt(minutesValue, 10) || 1);
       if (Number.isNaN(start.getTime())) return new Date().toISOString();
       return new Date(start.getTime() + minutes * 60000).toISOString();
+    }
+
+    function minutesBetweenIso(startValue, endValue) {
+      const start = new Date(startValue);
+      const end = new Date(endValue);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 1;
+      return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 60000));
     }
 
     function isoForSelectedDayMinute(minutes) {
@@ -480,6 +489,7 @@
     function setMode(nextMode) {
       if (mode === nextMode) return;
       stopTimer();
+      discardLiveSessionEntry();
       mode = nextMode;
       elapsed = 0;
       sessionStartedAt = null;
@@ -533,14 +543,82 @@
       updateDisplay();
     }
 
+    function clearLiveSessionState() {
+      liveSessionEntryId = null;
+      liveSessionLoggedMinutes = 0;
+    }
+
+    function discardLiveSessionEntry() {
+      if (!liveSessionEntryId) return;
+      completed = completed.filter((entry) => entry.id !== liveSessionEntryId);
+      saveLog();
+      clearLiveSessionState();
+      renderLog({ preserveScroll: true });
+    }
+
+    function liveSessionMinutes(final = false) {
+      if (final) return Math.max(1, Math.ceil(elapsed / 60));
+      const completedQuarterHours = Math.floor(elapsed / (15 * 60)) * 15;
+      return Math.max(1, completedQuarterHours);
+    }
+
+    function updateLiveSessionEntry(options = {}) {
+      if (!liveSessionEntryId || !sessionStartedAt) return;
+      const minutes = liveSessionMinutes(Boolean(options.final));
+      if (!options.force && minutes === liveSessionLoggedMinutes) return;
+      let found = false;
+      const endedAt = options.final ? new Date().toISOString() : addMinutesToIso(sessionStartedAt, minutes);
+      completed = completed.map((entry) => {
+        if (entry.id !== liveSessionEntryId) return entry;
+        found = true;
+        return {
+          ...entry,
+          task: taskName.value.trim() || "Untitled task",
+          mode,
+          minutes,
+          startedAt: sessionStartedAt,
+          endedAt
+        };
+      });
+      if (!found) {
+        clearLiveSessionState();
+        return;
+      }
+      liveSessionLoggedMinutes = minutes;
+      selectedDate = new Date(sessionStartedAt);
+      saveLog();
+      renderLog({ preserveScroll: true });
+    }
+
+    function createLiveSessionEntry() {
+      if (liveSessionEntryId || !sessionStartedAt) return;
+      const minutes = liveSessionMinutes();
+      const entry = {
+        id: crypto.randomUUID(),
+        task: taskName.value.trim() || "Untitled task",
+        mode,
+        minutes,
+        startedAt: sessionStartedAt,
+        endedAt: addMinutesToIso(sessionStartedAt, minutes)
+      };
+      liveSessionEntryId = entry.id;
+      liveSessionLoggedMinutes = minutes;
+      completed = [entry, ...completed].slice(0, 300);
+      selectedDate = new Date(entry.startedAt);
+      saveLog();
+      renderLog({ preserveScroll: true });
+    }
+
     function startTimer() {
       if (mode === "down") setGoalFromInput();
       if (mode === "down" && elapsed >= duration) elapsed = 0;
       if (!sessionStartedAt) sessionStartedAt = new Date().toISOString();
+      createLiveSessionEntry();
       running = true;
       timerId = window.setInterval(() => {
         elapsed += 1;
         updateDisplay();
+        updateLiveSessionEntry();
       }, 1000);
       updateDisplay();
     }
@@ -564,11 +642,16 @@
     }
 
     function finishSession() {
-      if (elapsed <= 0) return;
+      if (elapsed <= 0 && !liveSessionEntryId) return;
       stopTimer();
-      recordSession();
+      if (liveSessionEntryId) {
+        updateLiveSessionEntry({ force: true, final: true });
+      } else {
+        recordSession();
+      }
       elapsed = 0;
       sessionStartedAt = null;
+      clearLiveSessionState();
       updateDisplay();
     }
 
@@ -587,7 +670,7 @@
       totalMinutes.textContent = total;
 
       const startHour = 0;
-      const hourHeight = 42;
+      const hourHeight = 63;
       const headerHeight = 26;
       const hourCount = 24;
       const gridRows = Array.from({ length: hourCount }, (_, index) => {
@@ -731,12 +814,16 @@
               <input id="edit-start-${entry.id}" name="startedAt" type="datetime-local" value="${toDateTimeLocal(entry.startedAt)}">
             </div>
             <div>
+              <label for="edit-end-${entry.id}">End time</label>
+              <input id="edit-end-${entry.id}" name="endedAt" type="datetime-local" value="${toDateTimeLocal(entry.endedAt)}">
+            </div>
+            <div>
               <label for="edit-minutes-${entry.id}">Minutes</label>
               <input id="edit-minutes-${entry.id}" name="minutes" type="number" min="1" max="1440" value="${entry.minutes}">
             </div>
-            <div class="full">
-              <label>Calculated finish</label>
-              <div class="finish-preview" data-finish-preview>${formatClockTime(entry.endedAt)}</div>
+            <div>
+              <label>Duration</label>
+              <div class="finish-preview" data-duration-preview>${entry.minutes} min</div>
             </div>
             <div class="full">
               <label for="edit-note-${entry.id}">Note</label>
@@ -1039,9 +1126,11 @@
 
     resetButton.addEventListener("click", () => {
       stopTimer();
+      discardLiveSessionEntry();
       duration = clampMinutes(minutesInput.value) * 60;
       elapsed = 0;
       sessionStartedAt = null;
+      clearLiveSessionState();
       updateDisplay();
     });
 
@@ -1193,12 +1282,21 @@
 
     editModal.addEventListener("input", (event) => {
       const form = event.target.closest(".edit-form");
-      if (!form || !["startedAt", "minutes"].includes(event.target.name)) return;
+      if (!form || !["startedAt", "endedAt", "minutes"].includes(event.target.name)) return;
       const start = form.elements.startedAt.value;
-      const minutes = form.elements.minutes.value;
-      const preview = form.querySelector("[data-finish-preview]");
-      if (!start || !minutes || !preview) return;
-      preview.textContent = formatClockTime(addMinutesToIso(start, minutes));
+      const endInput = form.elements.endedAt;
+      const minutesInput = form.elements.minutes;
+      const preview = form.querySelector("[data-duration-preview]");
+      if (!start || !endInput || !minutesInput || !preview) return;
+      if (event.target.name === "minutes") {
+        const minutes = Math.max(1, Number.parseInt(minutesInput.value, 10) || 1);
+        endInput.value = toDateTimeLocal(addMinutesToIso(fromDateTimeLocal(start), minutes));
+      } else {
+        const minutes = minutesBetweenIso(fromDateTimeLocal(start), fromDateTimeLocal(endInput.value));
+        minutesInput.value = minutes;
+      }
+      const minutes = Math.max(1, Number.parseInt(minutesInput.value, 10) || 1);
+      preview.textContent = `${minutes} min`;
     });
 
     editModal.addEventListener("submit", (event) => {
